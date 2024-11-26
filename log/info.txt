@@ -1,0 +1,3 @@
+THIS FOLDER WILL HOLD logfiles for NODE and CONTROLLER.
+Placeholder text file so that this folder exists on future clones.
+logfiles are git ignored.
