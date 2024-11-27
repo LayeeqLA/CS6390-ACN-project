@@ -1,0 +1,3 @@
+THIS FOLDER WILL HOLD input_X and output_X files for all nodes.
+Placeholder text file so that this folder exists on future clones.
+The input/output files themselves are git ignored.
