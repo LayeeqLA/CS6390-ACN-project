@@ -12,9 +12,10 @@ FILE_WRITE_FAIL_STR = "Failed to write to file: {} -> will retry"
 
 class Controller:
     def __init__(self):
-        self.neighbors = dict()
+        self.neighbors: dict[int, list[int]] = dict()
         self.edges = set()
-        self.nodes = set()
+        self.nodes: set[int] = set()
+        self.read_counts: list[int] = None
         self.logfile = open(LOGFILE_STR, "wt")
         self.write_log("*****STARTING CONTROLLER*****")
 
@@ -36,7 +37,7 @@ class Controller:
             for line in all_lines:
                 if line.strip() == "":
                     continue
-                self.edges.add(tuple(line.split()))
+                self.edges.add(tuple([int(x) for x in line.split()]))
         self.write_log("Edges: " + str(self.edges))
 
         for x, y in self.edges:
@@ -45,6 +46,7 @@ class Controller:
             self.neighbors[x] = neighbor_list
             self.nodes.add(x)
             self.nodes.add(y)
+        self.read_counts = [0] * len(self.nodes)
         self.write_log("Nodes: " + str(self.nodes))
         self.write_log("Neighbors list: " + str(self.neighbors))
 
@@ -54,20 +56,21 @@ class Controller:
         self.logfile.write(value + "\n")
 
     def write_in(self, nodeId: int, lines: list[str]):
+        if len(lines) == 0:
+            return
+
         done = False
         while not done:
             try:
                 with open(INFILE_STR.format(nodeId), "at") as f:
-                    f.writelines(
-                        lines
-                    )  # TODO: check if it needs extra \n for each line
+                    f.writelines(lines)
+                    # TODO: check if it needs extra \n for each line
                     done = True
             except:
                 self.write_log(FILE_WRITE_FAIL_STR.format(INFILE_STR.format(nodeId)))
 
     def process_messages(self):
         for node in self.nodes:
-            # TODO maintain previous read count, init to zero
             messages = None
             try:
                 with open(OUTFILE_STR.format(node), "rt") as f:
@@ -77,12 +80,13 @@ class Controller:
 
             if messages and len(messages) > 0:
                 for neighbor in self.neighbors.get(node, []):
-                    self.write_in(neighbor, messages)
+                    self.write_in(neighbor, messages[self.read_counts[node] :])
+                self.read_counts[node] = len(messages)
 
     def execute(self):
         for currentTime in range(self.duration):
-            self.write_log(currentTime)
             self.process_messages()
+            self.write_log(f"Finished for time={currentTime}")
             time.sleep(1)
 
     def __del__(self):
