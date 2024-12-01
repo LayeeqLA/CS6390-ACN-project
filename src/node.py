@@ -37,8 +37,11 @@ class RoutingTable:
         self.in_distances[id] = 0
         self.out_distances[id] = 0
 
-    def get_in_neighbors(self) -> str:
+    def get_in_neighbors_str(self) -> str:
         return " ".join([str(id) for id in MAX_RANGE if self.in_distances[id] == 1])
+
+    def get_in_neighbors(self) -> list[int]:
+        return [id for id, x in enumerate(self.in_distances) if x == 1]
 
     def get_in_distance_msg(self) -> str:
         return IN_DIST_MSG.format(
@@ -51,7 +54,7 @@ class RoutingTable:
             sender=self.id,
             origin=self.id,
             out_distances=" ".join(map(str, self.out_distances)),
-            in_neighbors=self.get_in_neighbors(),
+            in_neighbors=self.get_in_neighbors_str(),
         )
 
     def add_in_neighbor(self, id: int, current_time: int) -> None:
@@ -123,13 +126,13 @@ class RoutingTable:
         if self.id in in_neighbors:
             self.update_out_distances(origin, out_dist)
 
-            # check if we have to flood
-            if sender == self.in_prev_hop[origin]:
-                # sender is on shortest path from origin to this/current node
-                DVECTOR_MSG_FLOOD = "dvector {sender} {original}"
-                return DVECTOR_MSG_FLOOD.format(
-                    sender=self.id, original=" ".join(message_split[2:])
-                )
+        # check if we have to flood
+        if sender in self.get_in_neighbors() and sender == self.in_prev_hop[origin]:
+            # sender is on shortest path from origin to this/current node
+            DVECTOR_MSG_FLOOD = "dvector {sender} {original}"
+            return DVECTOR_MSG_FLOOD.format(
+                sender=self.id, original=" ".join(message_split[2:])
+            )
 
         # do not have to flood if we reached here
         return None
@@ -273,10 +276,13 @@ class Node:
                 )
 
             case "dvector":
-                self.routing_table.process_dvector_msg(message)
+                flood_msg = self.routing_table.process_dvector_msg(message)
                 self.write_log(
                     f"After: OUT: {self.routing_table.out_distances} NextHop: {self.routing_table.out_next_hop}\n"
                 )
+                if flood_msg:
+                    # output the message if it has to flood it
+                    self.write_out(flood_msg)
 
             case _:
                 self.write_log(f"Unhandled message: {message}")
