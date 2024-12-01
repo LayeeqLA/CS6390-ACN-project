@@ -15,6 +15,7 @@ SENDER = "sender"
 RECEIVER = "receiver"
 
 MAX_NODES = 10
+MAX_RANGE = range(MAX_NODES)
 INFINITY = 99999
 EXPIRY_TIME = 30  # no longer neighbor if no hello for more than `30 seconds`
 HELLO_MSG = "hello {sender}"
@@ -27,19 +28,17 @@ DATA_MSG = "data {sender} {root} {string}"
 
 class RoutingTable:
     def __init__(self, id) -> None:
-        self.id = id
-        self.in_distances = [INFINITY] * MAX_NODES
-        self.out_distances = [INFINITY] * MAX_NODES
-        self.out_next_hop = [None] * MAX_NODES
-        self.in_prev_hop = [None] * MAX_NODES
-        self.last_refresh = [0] * MAX_NODES
+        self.id: int = id
+        self.in_distances: list[int] = [INFINITY] * MAX_NODES
+        self.out_distances: list[int] = [INFINITY] * MAX_NODES
+        self.out_next_hop: list[int] = [None] * MAX_NODES
+        self.in_prev_hop: list[int] = [None] * MAX_NODES
+        self.last_refresh: list[int] = [None] * MAX_NODES
         self.in_distances[id] = 0
         self.out_distances[id] = 0
 
     def get_in_neighbors(self) -> str:
-        return " ".join(
-            [str(id) for id in range(MAX_NODES) if self.in_distances[id] != INFINITY]
-        )
+        return " ".join([str(id) for id in MAX_RANGE if self.in_distances[id] == 1])
 
     def get_in_distance_msg(self) -> str:
         return IN_DIST_MSG.format(
@@ -61,11 +60,26 @@ class RoutingTable:
         self.last_refresh[id] = current_time
         # TODO any further processing required?
 
+    def purge_in_neighbors(self, current_time: int) -> None:
+        for id in MAX_RANGE:
+            if id == self.id:
+                # skip self
+                continue
+            if (
+                self.last_refresh[id]
+                and (current_time - self.last_refresh[id]) > EXPIRY_TIME
+            ):
+                # did not receive hello from node `id` for more than EXPIRY_TIME seconds
+                self.last_refresh = None
+                self.in_distances = INFINITY
+                self.in_prev_hop = None
+        # TODO: Check if we have to process any other objects?
+
     def process_in_distance_msg(self, message: str) -> None:
         message_split = message.split()
         sender = int(message_split[1])
         sender_in_dist = [int(d) for d in message_split[2:]]
-        for id in range(MAX_NODES):
+        for id in MAX_RANGE:
             dist = sender_in_dist[id]
             curr = self.in_distances[id]
             prev_hop = self.in_prev_hop[id]
@@ -80,16 +94,45 @@ class RoutingTable:
                 # tie break with lower ID
                 self.in_prev_hop[id] = sender
 
+    def update_out_distances(self, origin: int, origin_out_dist: list[int]) -> None:
+        for id in MAX_RANGE:
+            self_dist = self.out_distances[id]
+            origin_dist = origin_out_dist[id]
+            self_next_hop = self.out_next_hop[id]
+            if origin_dist == INFINITY:
+                # not reachable from origin node -> nothing to process
+                continue
+            if self_dist == INFINITY or (origin_dist + 1) < self_dist:
+                self.out_distances[id] = origin_dist + 1
+                self.out_next_hop[id] = origin
+                continue
+            if (origin_dist + 1) == self_dist and origin < self_next_hop:
+                # tie breaker, update with lower ID
+                self.out_next_hop[id] = origin
 
-class Neighbor:
+    def process_dvector_msg(self, message: str) -> str:
+        message_split = message.split()
+        sender = int(message_split[1])
+        origin = int(message_split[2])
+        out_dist = [int(d) for d in message_split[3:13]]
+        in_neighbors = [int(d) for d in message_split[14:]]
 
-    def __init__(self, id, distance, time) -> None:
-        self.id = id
-        self.distance = distance  # hops
-        self.last_refresh_time = time
+        # print(f"dvector processing: origin: {origin} in_neighbors: {in_neighbors}")
 
-    def updateTime(self, time) -> None:
-        self.last_refresh_time = time
+        # update this node's out distances if it is part of in-neighbors of origin
+        if self.id in in_neighbors:
+            self.update_out_distances(origin, out_dist)
+
+            # check if we have to flood
+            if sender == self.in_prev_hop[origin]:
+                # sender is on shortest path from origin to this/current node
+                DVECTOR_MSG_FLOOD = "dvector {sender} {original}"
+                return DVECTOR_MSG_FLOOD.format(
+                    sender=self.id, original=" ".join(message_split[2:])
+                )
+
+        # do not have to flood if we reached here
+        return None
 
 
 class Node:
@@ -158,11 +201,17 @@ class Node:
         if self.mode == RECEIVER:
             self.write_log(f"Sender ID: {self.senderId}")
         self.write_log(f"Duration: {self.duration}")
+        self.write_log(
+            f"\nINIT: IN Distance: {self.routing_table.in_distances} PrevHop: {self.routing_table.in_prev_hop}"
+            + f"\nINIT: OUT: {self.routing_table.out_distances} NextHop: {self.routing_table.out_next_hop}\n\n"
+        )
 
     def write_log(self, value=""):
         if type(value) != str:
             value = str(value)
-        self.logfile.write(value + "\n")
+        if not value.endswith("\n"):
+            value = value + "\n"
+        self.logfile.write(value)
 
     def write_out(self, value: str):
         done = False
@@ -211,18 +260,22 @@ class Node:
     def process_message(self, message: str, current_time: int):
         # process individual incoming message
         self.write_log(f"Processing message: {message}")
+
         match message.split()[0]:
             case "hello":
                 hello_from = int(message.split()[1])
                 self.routing_table.add_in_neighbor(hello_from, current_time)
 
             case "in-distance":
-                self.write_log(
-                    f"Before: Distance: {self.routing_table.in_distances} PrevHop: {self.routing_table.in_prev_hop}"
-                )
                 self.routing_table.process_in_distance_msg(message)
                 self.write_log(
-                    f"After: Distance: {self.routing_table.in_distances} PrevHop: {self.routing_table.in_prev_hop}"
+                    f"After: IN Distance: {self.routing_table.in_distances} PrevHop: {self.routing_table.in_prev_hop}\n"
+                )
+
+            case "dvector":
+                self.routing_table.process_dvector_msg(message)
+                self.write_log(
+                    f"After: OUT: {self.routing_table.out_distances} NextHop: {self.routing_table.out_next_hop}\n"
                 )
 
             case _:

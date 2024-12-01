@@ -76,7 +76,7 @@ class Controller:
                 with open(OUTFILE_STR.format(node), "rt") as f:
                     messages = f.readlines()
             except:
-                self.write_log("Could not read outfile of node " + node)
+                self.write_log(f"Could not read outfile of node: {node}")
 
             if messages and len(messages) > 0:
                 for neighbor in self.neighbors.get(node, []):
