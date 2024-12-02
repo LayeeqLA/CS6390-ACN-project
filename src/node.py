@@ -137,6 +137,14 @@ class RoutingTable:
         # do not have to flood if we reached here
         return None
 
+    def get_parent_from_sender(self, sender_id):
+        # if no path determined yet from sender_id to this node
+        if self.in_distances[sender_id] == INFINITY:
+            return None
+
+        parent = self.in_prev_hop[sender_id]
+        return parent
+
 
 class Node:
 
@@ -145,11 +153,12 @@ class Node:
         self.id = None
         self.mode = None
         self.duration = None
-        self.string = None
-        self.senderId = None
+        self.send_string = None
+        self.sender_id = None
         self.logfile = None
         self.read_index = 0
         self.routing_table = None
+        self.multicast_rt = None
 
         match (len(sys.argv)):
             case 3:
@@ -174,10 +183,10 @@ class Node:
 
                 self.mode = sys.argv[2]
                 if self.mode == SENDER:
-                    self.string = sys.argv[3]
+                    self.send_string = sys.argv[3]
                 elif self.mode == RECEIVER:
                     try:
-                        self.senderId = int(sys.argv[3])
+                        self.sender_id = int(sys.argv[3])
                     except:
                         self.write_log(f"Invalid senderId: {sys.argv[3]}")
                         exit(1)
@@ -191,6 +200,7 @@ class Node:
 
         # init routing table
         self.routing_table = RoutingTable(self.id)
+        self.multicast_rt = MulticastRoutingTable(self.id, self)
 
         # log the config
         self.write_init_logs()
@@ -199,15 +209,16 @@ class Node:
         self.write_log(f"*****STARTED NODE SERVICE*****")
         self.write_log(f"ID: {self.id}")
         self.write_log(f"Mode: {self.mode}")
-        if self.mode == SENDER:
-            self.write_log(f"Send String: '{self.string}'")
-        if self.mode == RECEIVER:
-            self.write_log(f"Sender ID: {self.senderId}")
         self.write_log(f"Duration: {self.duration}")
         self.write_log(
             f"\nINIT: IN Distance: {self.routing_table.in_distances} PrevHop: {self.routing_table.in_prev_hop}"
             + f"\nINIT: OUT: {self.routing_table.out_distances} NextHop: {self.routing_table.out_next_hop}\n\n"
         )
+        if self.multicast_rt.node_mode == SENDER:
+            self.write_log(f"Send String: '{self.multicast_rt.send_string}'")
+        if self.multicast_rt.node_mode == RECEIVER:
+            self.write_log(f"Sender ID: {self.multicast_rt.sender_id}")
+            self.write_log(f"Multicast Table: {self.multicast_rt.info}")
 
     def write_log(self, value=""):
         if type(value) != str:
@@ -243,7 +254,19 @@ class Node:
 
     def refresh_parent(self, current_time: int):
         # send join message to each parent of each tree I am involved in, if time to do so
-        pass
+        if current_time % 5 == 0:
+            # purge any expired entries in multicast routing table
+            self.multicast_rt.purge_expired(current_time)
+            msg = self.multicast_rt.get_join_messages()
+            if msg:
+                self.write_out(msg)
+            self.write_log(f"MC TABLE: {self.multicast_rt.info}\n")
+
+    def send_multicast_data(self, current_time: int):
+        # data message if this node is a sender and every ten seconds
+        if self.mode == SENDER and (current_time % 10) == 0:
+            msg = DATA_MSG.format(sender=self.id, root=self.id, string=self.send_string)
+            self.write_out(msg)
 
     def read_input_file(self, current_time: int):
         # read the input file and process each new message received
@@ -284,6 +307,18 @@ class Node:
                     # output the message if it has to flood it
                     self.write_out(flood_msg)
 
+            case "join":
+                fwd_join_msg = self.multicast_rt.process_join_msg(message, current_time)
+                self.write_log(f"MC TABLE: {self.multicast_rt.info}\n")
+                if fwd_join_msg:
+                    self.write_out(fwd_join_msg)
+
+            case "data":
+                fwd_data_msg = self.multicast_rt.process_data_msg(message)
+                if fwd_data_msg:
+                    self.write_out(fwd_data_msg)
+                    self.write_log(f"Forwarding data message: {fwd_data_msg}\n")
+
             case _:
                 self.write_log(f"Unhandled message: {message}")
 
@@ -294,6 +329,7 @@ class Node:
             self.send_dvector(current_time)
             self.send_in_distance(current_time)
             self.refresh_parent(current_time)
+            self.send_multicast_data(current_time)
             self.read_input_file(current_time)
             time.sleep(1)
 
@@ -303,9 +339,163 @@ class Node:
             self.logfile.close()
 
 
+class MulticastTableEntry:
+
+    def __init__(self, sender_id: int, receiver_id: int, last_refresh: int):
+        self.sender_id = sender_id
+        self.receiver_id = receiver_id
+        self.last_refresh = last_refresh
+
+    def __repr__(self):
+        return f"(Receiver: {self.receiver_id} last_refresh: {self.last_refresh}"
+
+
+class MulticastRoutingTable:
+
+    def __init__(self, id: int, node: Node):
+        self.id: int = id
+        self.node_mode: str = node.mode
+        self.unicast_rt: RoutingTable = node.routing_table
+        self.info: dict[int, list[MulticastTableEntry]] = dict()
+
+        if self.node_mode == SENDER:
+            self.send_string = node.send_string
+        if self.node_mode == RECEIVER:
+            self.sender_id = node.sender_id
+            self.info[self.sender_id] = [
+                MulticastTableEntry(self.sender_id, self.id, 0)
+            ]
+
+    def purge_expired(self, current_time: int):
+        for sender_id, entry_list in self.info.items():
+            for entry in entry_list:
+                if entry.receiver_id == self.id:
+                    # this should only be true if this node is running in receiver mode
+                    assert self.node_mode == RECEIVER
+                    # update to current time and skip purge for this
+                    entry.last_refresh = current_time
+                    continue
+
+            # retain only when curr-last_refresh <= 30
+            updated_receivers = [
+                entry
+                for entry in entry_list
+                if current_time - entry.last_refresh <= EXPIRY_TIME
+            ]
+
+            self.info[sender_id] = updated_receivers
+
+        # retain sender_id records only for non-empty receiver list
+        self.info = {
+            sender_id: entries_list
+            for sender_id, entries_list in self.info.items()
+            if len(entries_list) > 0
+        }
+
+    def get_join_messages(self):
+        join_messages: list[str] = []
+        for sender_id in self.info.keys():
+            # create join messages
+            parent_id = self.unicast_rt.get_parent_from_sender(sender_id)
+            if parent_id is None:
+                # unreachable, skip join
+                continue
+            next_hop_id = self.unicast_rt.out_next_hop[parent_id]
+            if next_hop_id is None:
+                # unreachable, skip join
+                continue
+
+            # add join message to send
+            join_messages.append(
+                JOIN_MSG.format(
+                    RID=self.id, SID=sender_id, PID=parent_id, NID=next_hop_id
+                )
+            )
+
+        if len(join_messages) == 0:
+            return None
+
+        return "\n".join(join_messages)
+
+    def process_join_msg(self, message: str, current_time: int) -> str | None:
+        rid, sid, pid, nid = list(map(int, message.split()[1:]))
+        if nid != self.id:
+            # ignore this message, not for me
+            return None
+
+        if pid != self.id:
+            # just need to fwd this to next hop
+            next_hop_id = self.unicast_rt.out_next_hop[pid]
+            return JOIN_MSG.format(RID=rid, SID=sid, PID=pid, NID=next_hop_id)
+
+        # pid == nid == self.id
+        entries: list[MulticastTableEntry] = self.info.get(sid, None)
+
+        if not entries:
+            # no record for sid, add fresh record
+            self.info[sid] = [MulticastTableEntry(sid, rid, current_time)]
+            return None
+
+        # check for an existing entry with this receiver
+        entry: MulticastTableEntry = next(
+            (entry_itr for entry_itr in entries if entry_itr.receiver_id == rid), None
+        )
+
+        if entry:
+            # existing entry found, just update last refresh
+            entry.last_refresh = current_time
+        else:
+            # need to create entry in the multicast rt
+            entries.append(MulticastTableEntry(sid, rid, current_time))
+
+        return None
+
+    def process_data_msg(self, message: str) -> str | None:
+        message_split = message.split()
+        sender = int(message_split[1])
+        root = int(message_split[2])
+
+        mc_entries: list[MulticastTableEntry] = self.info.get(root, None)
+        if not mc_entries:
+            # this node is not on the root's tree, ignore
+            return None
+
+        parent = self.unicast_rt.get_parent_from_sender(root)
+        if sender != parent:
+            # not from parent, ignore
+            return None
+
+        # sender == parent
+        # 1. self_service
+        # 2. fwd to children
+
+        fwd_service = False
+        for mc_entry in mc_entries:
+            if mc_entry.receiver_id == self.id:
+                # this node is the one of receiver, write the received string
+                self.write_multicast_out(root, " ".join(message_split[3:]))
+            else:
+                # need to forward the packet to children on root's tree
+                fwd_service = True
+
+        if fwd_service:
+            return DATA_MSG.format(
+                sender=self.id, root=root, string=" ".join(message_split[3:])
+            )
+
+        # no forward service required
+        return None
+
+    def write_multicast_out(self, root: int, value: str):
+        done = False
+        while not done:
+            try:
+                with open(RCVFILE_STR.format(R=self.id, S=root), "at") as f:
+                    f.write(value + "\n")
+                    done = True
+            except:
+                pass
+
+
 if __name__ == "__main__":
     Node().execute()
-
-
-def parse_dvector():
-    pass
