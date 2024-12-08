@@ -11,7 +11,7 @@
 
 ## STEPS TO RUN
 
- - First, a `topology` file is required to created with list of unidirectional edges between nodes.
+ - First, a `topology` file is required, in which each line represents a unidirectional edge between nodes. For example, "x y" line indicates there is a unidirectional edge from x to y.
  - Second, a node can be run in the following configuration:
 	 - Node is a sender: `./node.py <ID> sender "<message>" <duration> &`
 	 - Node is a receiver: `./node.py <ID> receiver <SID> <duration> &`
@@ -22,3 +22,4 @@ where `SID` is the ID of the sender whose tree the receiver wants to join, `dura
   
 **NOTE1: A sample scenario file `scenario1` has been provided for reference.**  
 **NOTE2: `topology` file has to be present in the folder of execution.**  
+**NOTE3: Assumes a system of maximum ten nodes (node IDs 0...9)**  
