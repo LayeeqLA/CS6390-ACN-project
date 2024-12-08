@@ -87,7 +87,7 @@ class Controller:
         for currentTime in range(self.duration):
             self.process_messages()
             self.write_log(f"Finished for time={currentTime}")
-            time.sleep(1)
+            time.sleep(0.6) #TODO
 
     def __del__(self):
         self.write_log("****END****")
