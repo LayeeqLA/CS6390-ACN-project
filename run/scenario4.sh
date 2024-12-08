@@ -12,9 +12,9 @@ echo "0 1
 0 4
 4 3" > ../topology
 
-../src/node.py 0 sender "some funny str" 100 &
+../src/node.py 0 sender "funny from 0" 100 &
 ../src/node.py 1 100 &
-../src/node.py 2 100 &
+../src/node.py 2 sender "funny from 2" 100 &
 ../src/node.py 3 receiver 0 100 &
-../src/node.py 4 100 &
+../src/node.py 4 receiver 2 100 &
 ../src/controller.py 101 &
