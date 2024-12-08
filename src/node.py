@@ -397,7 +397,7 @@ class Node:
             self.refresh_parent(current_time)
             self.send_multicast_data(current_time)
             self.read_input_file(current_time)
-            time.sleep(0.6)  # TODO
+            time.sleep(1)
 
     def __del__(self):
         if self.logfile:
