@@ -25,7 +25,7 @@ where `SID` is the ID of the sender whose tree the receiver wants to join, `dura
 **NOTE3: Assumes a system of maximum ten nodes (node IDs 0...9)**  
   
 ## FILES GENERATED DURING EXECUTION
-- `input_x`: messages are received by node `x` through this file
+- `input_x`: incoming messages are received by node `x` through this file
 - `output_x`: outgoing messages from node `x` are written to this file
-- `R_received_from_S`: this file contains the messages received from sender `S` by receiver `R`
+- `R_received_from_S`: this file contains the messages received from sender `S` by receiver `R` after joining its tree
 - `node_x.log`: this file that contains debugging logs for node `x` (can be ignored)
