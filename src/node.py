@@ -16,7 +16,7 @@ RECEIVER = "receiver"
 
 MAX_NODES = 10
 MAX_RANGE = range(MAX_NODES)
-INFINITY = 99999
+INFINITY = -1
 EXPIRY_TIME = 30  # no longer neighbor if no hello for more than `30 seconds`
 HELLO_MSG = "hello {sender}"
 DVECTOR_MSG = "dvector {sender} {origin} {out_distances} in-neighbors {in_neighbors}"
@@ -57,25 +57,32 @@ class RoutingTable:
             in_neighbors=self.get_in_neighbors_str(),
         )
 
-    def add_in_neighbor(self, id: int, current_time: int) -> None:
+    def refresh_in_neighbor(self, id: int, current_time: int) -> None:
         self.in_distances[id] = 1
         self.in_prev_hop[id] = id
         self.last_refresh[id] = current_time
-        # TODO any further processing required?
 
-    def purge_in_neighbors(self, current_time: int) -> None:
+    def purge_expired(self, current_time: int) -> None:
         for id in MAX_RANGE:
             if id == self.id:
                 # skip self
                 continue
+
             if (
                 self.last_refresh[id]
                 and (current_time - self.last_refresh[id]) > EXPIRY_TIME
             ):
                 # did not receive hello from node `id` for more than EXPIRY_TIME seconds
-                self.last_refresh = None
-                self.in_distances = INFINITY
-                self.in_prev_hop = None
+                self.last_refresh[id] = None
+                self.in_distances[id] = INFINITY
+                self.in_prev_hop[id] = None
+
+                # update other nodes who used this "id" to reach this node
+                for in_id in MAX_RANGE:
+                    if self.in_prev_hop[in_id] == id and id != self.id:
+                        self.in_distances[in_id] = INFINITY
+                        self.in_prev_hop[in_id] = None
+
         # TODO: Check if we have to process any other objects?
 
     def process_in_distance_msg(self, message: str) -> None:
@@ -83,11 +90,20 @@ class RoutingTable:
         sender = int(message_split[1])
         sender_in_dist = [int(d) for d in message_split[2:]]
         for id in MAX_RANGE:
+            if id == self.id:
+                continue
+
             dist = sender_in_dist[id]
             curr = self.in_distances[id]
             prev_hop = self.in_prev_hop[id]
             if dist == INFINITY:
+                if curr != INFINITY and prev_hop == sender:
+                    # previously reachable through sender, but no longer
+                    self.in_prev_hop[id] = None
+                    self.in_distances[id] = INFINITY
                 continue
+
+            assert dist != INFINITY
             if curr == INFINITY or (dist + 1) < curr:
                 self.in_distances[id] = dist + 1
                 self.in_prev_hop[id] = sender
@@ -102,9 +118,21 @@ class RoutingTable:
             self_dist = self.out_distances[id]
             origin_dist = origin_out_dist[id]
             self_next_hop = self.out_next_hop[id]
+
             if origin_dist == INFINITY:
-                # not reachable from origin node -> nothing to process
+                # not reachable from origin node
+                if self_dist != INFINITY and self_next_hop == origin:
+                    # "id" no longer reachable through "origin"
+                    self.out_distances[id] = INFINITY
+                    self.out_next_hop[id] = None
+                    for out_id in MAX_RANGE:
+                        if self.out_next_hop[out_id] == id:
+                            # remove subsequent nodes using "id" as next hop
+                            self.out_distances[out_id] = INFINITY
+                            self.out_next_hop[out_id] = None
                 continue
+
+            assert origin_dist != INFINITY
             if self_dist == INFINITY or (origin_dist + 1) < self_dist:
                 self.out_distances[id] = origin_dist + 1
                 self.out_next_hop[id] = origin
@@ -277,7 +305,7 @@ class Node:
         except:
             self.write_log("Could not read this node's input file")
         if messages:
-            filtered = messages[self.read_index :]
+            filtered = set(messages[self.read_index :])
             if len(filtered) > 0:
                 self.read_index = len(messages)
                 for msg in filtered:
@@ -290,7 +318,7 @@ class Node:
         match message.split()[0]:
             case "hello":
                 hello_from = int(message.split()[1])
-                self.routing_table.add_in_neighbor(hello_from, current_time)
+                self.routing_table.refresh_in_neighbor(hello_from, current_time)
 
             case "in-distance":
                 self.routing_table.process_in_distance_msg(message)
@@ -326,6 +354,7 @@ class Node:
         for current_time in range(self.duration):
             self.write_log(f"=============Processing for t={current_time}")
             self.send_hello(current_time)
+            self.routing_table.purge_expired(current_time)
             self.send_dvector(current_time)
             self.send_in_distance(current_time)
             self.refresh_parent(current_time)

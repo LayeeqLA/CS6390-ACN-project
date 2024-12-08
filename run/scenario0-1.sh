@@ -10,8 +10,9 @@ echo "0 1
 2 3
 3 0" > ../topology
 
+# two receivers
 ../src/node.py 0 sender "funny str" 66 &
 ../src/node.py 1 66 &
-../src/node.py 2 66 &
+../src/node.py 2 receiver 0 66 &
 ../src/node.py 3 receiver 0 66 &
-../src/controller.py 65 &
+../src/controller.py 66 &
