@@ -1,2 +1,24 @@
-# CS6390-ACN-project
-CS6390 ACN project
+# CS6390 ACN PROJECT Fall 2024
+## LAYEEQ AHMED [LXA230013]
+## ENV DETAILS
+
+ - Built using Python 3.6.5
+ - Tested on csgrads1 server
+
+## SOURCE FILES
+- `node.py` - for running a node for a given topology
+- `controller.py` - for processing input and output message for a given topology
+
+## STEPS TO RUN
+
+ - First, a `topology` file is required to created with list of unidirectional edges between nodes.
+ - Second, a node can be run in the following configuration:
+	 - Node is a sender: `./node.py <ID> sender "<message>" <duration> &`
+	 - Node is a receiver: `./node.py <ID> receiver <SID> <duration> &`
+	 - Node is neither a sender nor a receiver: `./node.py <ID> <duration> &`  
+where `SID` is the ID of the sender whose tree the receiver wants to join, `duration` is the time in seconds for the nodes to execute and `message` is the data that the sends to all its receivers.  
+**Do note that message has to be enclosed in "" to avoid issues with spaces and treat to it as a single string message.**
+ - Third, controller is run using `./controller.py <duration> &`, where `duration` is the time in seconds for the controller to execute.  
+  
+**NOTE1: A sample scenario file `scenario1` has been provided for reference.**  
+**NOTE2: `topology` file has to be present in the folder of execution.**  
